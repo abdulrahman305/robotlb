@@ -97,7 +97,7 @@ pub struct CurrentContext {
     pub hcloud_config: HCloudConfig,
 }
 impl CurrentContext {
-    pub fn new(client: kube::Client, config: OperatorConfig, hcloud_config: HCloudConfig) -> Self {
+    #[must_use] pub const fn new(client: kube::Client, config: OperatorConfig, hcloud_config: HCloudConfig) -> Self {
         Self {
             client,
             config,
@@ -132,7 +132,7 @@ pub async fn reconcile_service(
         finalizers::add(context.client.clone(), &svc).await?;
     }
 
-    match spec.type_.as_ref().map(String::as_str) {
+    match spec.type_.as_deref() {
         Some("NodePort") => {
             reconcile_node_port(lb, svc.clone(), context)
                 .in_current_span()
@@ -220,6 +220,7 @@ pub async fn reconcile_node_port(
     Ok(Action::requeue(Duration::from_secs(10)))
 }
 
+#[allow(clippy::needless_pass_by_value)]
 fn on_error(_: Arc<Service>, error: &LBTrackerError, _context: Arc<CurrentContext>) -> Action {
     match error {
         LBTrackerError::SkipService => Action::requeue(Duration::from_secs(60 * 5)),

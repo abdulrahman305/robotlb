@@ -4,10 +4,16 @@ use kube::{
     Api, Client, ResourceExt,
 };
 
-use crate::{consts, error::LBTrackerResult};
+use crate::{
+    consts,
+    error::{LBTrackerError, LBTrackerResult},
+};
 
 pub async fn add(client: Client, svc: &Service) -> LBTrackerResult<()> {
-    let api = Api::<Service>::namespaced(client, svc.namespace().unwrap().as_str());
+    let api = Api::<Service>::namespaced(
+        client,
+        svc.namespace().ok_or(LBTrackerError::SkipService)?.as_str(),
+    );
     let patch = json!({
         "metadata": {
             "finalizers": [consts::FINALIZER_NAME]
@@ -22,6 +28,7 @@ pub async fn add(client: Client, svc: &Service) -> LBTrackerResult<()> {
     Ok(())
 }
 
+#[must_use]
 pub fn check(service: &Service) -> bool {
     service
         .metadata
@@ -33,10 +40,13 @@ pub fn check(service: &Service) -> bool {
 }
 
 pub async fn remove(client: Client, svc: &Service) -> LBTrackerResult<()> {
-    let api = Api::<Service>::namespaced(client, svc.namespace().unwrap().as_str());
+    let api = Api::<Service>::namespaced(
+        client,
+        svc.namespace().ok_or(LBTrackerError::SkipService)?.as_str(),
+    );
     let finalizers = svc
         .finalizers()
-        .into_iter()
+        .iter()
         .filter(|item| item.as_str() != consts::FINALIZER_NAME)
         .collect::<Vec<_>>();
     let patch = json!({

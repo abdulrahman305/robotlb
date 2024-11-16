@@ -16,8 +16,8 @@ pub struct LabelFilter {
 }
 
 impl LabelFilter {
-    pub fn check(&self, labels: &BTreeMap<String, String>) -> bool {
-        for rule in self.rules.iter() {
+    #[must_use] pub fn check(&self, labels: &BTreeMap<String, String>) -> bool {
+        for rule in &self.rules {
             match rule {
                 Rule::Equal(key, value) => {
                     if labels.get(key) != Some(value) {
@@ -52,8 +52,8 @@ impl FromStr for LabelFilter {
         let mut rules = Vec::new();
         for rule in s.split(',') {
             let parts = rule.split('=').collect::<Vec<_>>();
-            match parts.as_slice() {
-                &[key] => {
+            match *parts.as_slice() {
+                [key] => {
                     if key.starts_with('!') {
                         rules.push(Rule::DoesNotExist(
                             key.strip_prefix('!').unwrap().to_string(),
@@ -62,7 +62,7 @@ impl FromStr for LabelFilter {
                     }
                     rules.push(Rule::Exists(key.to_string()));
                 }
-                &[key, value] => {
+                [key, value] => {
                     if key.ends_with('!') {
                         rules.push(Rule::NotEqual(
                             key.strip_suffix('!').unwrap().to_string(),

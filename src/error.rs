@@ -22,6 +22,6 @@ pub enum LBTrackerError {
 
 impl<T> From<hcloud::apis::Error<T>> for LBTrackerError {
     fn from(value: hcloud::apis::Error<T>) -> Self {
-        LBTrackerError::HCloudError(format!("{}", value))
+        Self::HCloudError(format!("{value}"))
     }
 }
