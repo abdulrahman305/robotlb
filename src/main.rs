@@ -9,7 +9,7 @@
 #![
     allow(
         // I don't care about this.
-        clippy::module_name_repetitions, 
+        clippy::module_name_repetitions,
         // Yo, the hell you should put
         // it in docs, if signature is clear as sky.
         clippy::missing_errors_doc
@@ -38,6 +38,10 @@ pub mod error;
 pub mod finalizers;
 pub mod label_filter;
 pub mod lb;
+
+#[cfg(not(target_env = "msvc"))]
+#[global_allocator]
+static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
 #[tokio::main]
 async fn main() -> LBTrackerResult<()> {
@@ -97,7 +101,12 @@ pub struct CurrentContext {
     pub hcloud_config: HCloudConfig,
 }
 impl CurrentContext {
-    #[must_use] pub const fn new(client: kube::Client, config: OperatorConfig, hcloud_config: HCloudConfig) -> Self {
+    #[must_use]
+    pub const fn new(
+        client: kube::Client,
+        config: OperatorConfig,
+        hcloud_config: HCloudConfig,
+    ) -> Self {
         Self {
             client,
             config,
@@ -162,12 +171,19 @@ pub async fn reconcile_load_balancer(
     mut lb: LoadBalancer,
     svc: Arc<Service>,
 ) -> LBTrackerResult<Action> {
-    let Some(svc_ingress) = svc.status.clone().unwrap_or_default().load_balancer.unwrap_or_default().ingress else {
+    let Some(svc_ingress) = svc
+        .status
+        .clone()
+        .unwrap_or_default()
+        .load_balancer
+        .unwrap_or_default()
+        .ingress
+    else {
         tracing::warn!("Service hasn't yet got IP, skipping");
         return Err(LBTrackerError::SkipService);
     };
     for ingress in svc_ingress {
-        if ingress.hostname.is_some(){
+        if ingress.hostname.is_some() {
             tracing::warn!("Hostname based loadbalancing is not supported, skipping");
             continue;
         }
@@ -175,7 +191,13 @@ pub async fn reconcile_load_balancer(
             lb.add_target(ip);
         }
     }
-    for port in svc.spec.clone().unwrap_or_default().ports.unwrap_or_default(){
+    for port in svc
+        .spec
+        .clone()
+        .unwrap_or_default()
+        .ports
+        .unwrap_or_default()
+    {
         let protocol = port.protocol.unwrap_or_else(|| "TCP".to_string());
         if protocol != "TCP" {
             tracing::warn!("Protocol {} is not supported, skipping", protocol);
@@ -224,14 +246,23 @@ pub async fn reconcile_node_port(
         }
     }
 
-    for port in svc.spec.clone().unwrap_or_default().ports.unwrap_or_default() {
+    for port in svc
+        .spec
+        .clone()
+        .unwrap_or_default()
+        .ports
+        .unwrap_or_default()
+    {
         let protocol = port.protocol.unwrap_or_else(|| "TCP".to_string());
         if protocol != "TCP" {
             tracing::warn!("Protocol {} is not supported. Skipping...", protocol);
             continue;
         }
         let Some(node_port) = port.node_port else {
-            tracing::warn!("Node port is not set for target_port {}. Skipping...", port.port);
+            tracing::warn!(
+                "Node port is not set for target_port {}. Skipping...",
+                port.port
+            );
             continue;
         };
         lb.add_service(port.port, node_port);

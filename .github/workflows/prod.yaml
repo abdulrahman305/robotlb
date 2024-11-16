@@ -1,0 +1,27 @@
+name: Release update Prod
+
+permissions:
+  id-token: write
+  contents: read # This is required for actions/checkout
+
+on:
+  release:
+    types: [released]
+
+jobs:
+  build-publish-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Update version
+        run: sed '0,/^version = .*/{s/version = .*/version = "${{ github.ref_name }}"/}' Cargo.toml
+      - uses: Intreecom/common-workflows/.github/actions/deploy-dev@main
+        with:
+          argocd_file_path: apps/lb-tracker/hetzner-prod.yaml
+          image_tag_key_path: ".image.tag"
+          ecr_repo_name: "ecr-microstack-prod-eu-west-1-lb-tracker"
+
+          role_to_assume: ${{ secrets.DEV_AWS_ASSUME_ROLE }}
+          gh_app_id: ${{ secrets.GH_APP_ID }}
+          gh_app_private_key: ${{ secrets.GH_APP_PRIVATE_KEY }}
