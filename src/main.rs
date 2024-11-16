@@ -20,19 +20,7 @@ use clap::Parser;
 use config::OperatorConfig;
 use error::{LBTrackerError, LBTrackerResult};
 use futures::StreamExt;
-use hcloud::{
-    apis::{
-        configuration::Configuration as HCloudConfig,
-        load_balancers_api::{
-            AddServiceParams, AddTargetParams, DeleteServiceParams, ListLoadBalancersParams,
-            RemoveTargetParams, UpdateServiceParams,
-        },
-    },
-    models::{
-        DeleteServiceRequest, LoadBalancerAddTarget, LoadBalancerService,
-        LoadBalancerServiceHealthCheck, RemoveTargetRequest, UpdateLoadBalancerService,
-    },
-};
+use hcloud::apis::configuration::Configuration as HCloudConfig;
 use k8s_openapi::api::core::v1::{Node, Service};
 use kube::{
     api::ListParams,
@@ -41,7 +29,7 @@ use kube::{
 };
 use label_filter::LabelFilter;
 use lb::LoadBalancer;
-use std::{collections::HashMap, str::FromStr, sync::Arc, time::Duration};
+use std::{str::FromStr, sync::Arc, time::Duration};
 use tracing::Instrument;
 
 pub mod config;

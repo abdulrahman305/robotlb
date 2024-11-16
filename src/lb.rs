@@ -45,7 +45,7 @@ impl LoadBalancer {
     pub fn try_from_svc(svc: &Service, context: &CurrentContext) -> LBTrackerResult<Self> {
         let retries = svc
             .annotations()
-            .get(consts::LB_RETRIES_LABEL_NAME)
+            .get(consts::LB_RETRIES_ANN_NAME)
             .map(String::as_str)
             .map(i32::from_str)
             .transpose()?
@@ -53,7 +53,7 @@ impl LoadBalancer {
 
         let timeout = svc
             .annotations()
-            .get(consts::LB_TIMEOUT_LABEL_NAME)
+            .get(consts::LB_TIMEOUT_ANN_NAME)
             .map(String::as_str)
             .map(i32::from_str)
             .transpose()?
@@ -61,7 +61,7 @@ impl LoadBalancer {
 
         let check_interval = svc
             .annotations()
-            .get(consts::LB_CHECK_INTERVAL_LABEL_NAME)
+            .get(consts::LB_CHECK_INTERVAL_ANN_NAME)
             .map(String::as_str)
             .map(i32::from_str)
             .transpose()?
@@ -114,18 +114,32 @@ impl LoadBalancer {
     ) -> LBTrackerResult<()> {
         for service in &hcloud_balancer.services {
             if let Some(destination_port) = self.services.get(&service.listen_port) {
-                if service.destination_port != *destination_port {
-                    tracing::info!(
-                    "Found service that listens for port {} but has wrong destination port, updating",
+                if service.destination_port == *destination_port
+                    && service.health_check.port == *destination_port
+                    && service.health_check.interval == self.check_interval
+                    && service.health_check.retries == self.retries
+                    && service.health_check.timeout == self.timeout
+                    && service.proxyprotocol == self.proxy_mode
+                    && service.http.is_none()
+                    && service.health_check.protocol
+                        == hcloud::models::load_balancer_service_health_check::Protocol::Tcp
+                {
+                    continue;
+                }
+                tracing::info!(
+                    "Desired service configuration for port {} does not match current configuration. Updating ...",
                     service.listen_port,
                 );
-                    hcloud::apis::load_balancers_api::update_service(
+                hcloud::apis::load_balancers_api::update_service(
                         &self.hcloud_config,
                     UpdateServiceParams {
                         id: hcloud_balancer.id,
                         body: Some(UpdateLoadBalancerService {
+                            http: None,
+                            protocol: Some(hcloud::models::update_load_balancer_service::Protocol::Tcp),
                             listen_port: service.listen_port,
                             destination_port: Some(*destination_port),
+                            proxyprotocol: Some(self.proxy_mode),
                             health_check: Some(Box::new(
                                 hcloud::models::UpdateLoadBalancerServiceHealthCheck {
                                     protocol: Some(hcloud::models::update_load_balancer_service_health_check::Protocol::Tcp),
@@ -136,12 +150,10 @@ impl LoadBalancer {
                                     timeout: Some(self.timeout),
                                 },
                             )),
-                            ..Default::default()
                         }),
                     },
                 )
                 .await?;
-                }
             } else {
                 tracing::info!(
                     "Deleting service that listens for port {} from load-balancer {}",
