@@ -9,6 +9,8 @@ use crate::{
     error::{LBTrackerError, LBTrackerResult},
 };
 
+/// Add finalizer to the service.
+/// This will prevent the service from being deleted.
 pub async fn add(client: Client, svc: &Service) -> LBTrackerResult<()> {
     let api = Api::<Service>::namespaced(
         client,
@@ -28,6 +30,7 @@ pub async fn add(client: Client, svc: &Service) -> LBTrackerResult<()> {
     Ok(())
 }
 
+/// Check if service has the finalizer.
 #[must_use]
 pub fn check(service: &Service) -> bool {
     service
@@ -39,6 +42,10 @@ pub fn check(service: &Service) -> bool {
         })
 }
 
+/// Remove finalizer from the service.
+/// This will allow the service to be deleted.
+///
+/// if service does not have the finalizer, this function will do nothing.
 pub async fn remove(client: Client, svc: &Service) -> LBTrackerResult<()> {
     let api = Api::<Service>::namespaced(
         client,

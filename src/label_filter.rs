@@ -2,21 +2,29 @@ use std::{collections::BTreeMap, str::FromStr};
 
 use crate::error::LBTrackerError;
 
+/// Enum of all possible rules for label filtering.
 #[derive(Debug, Clone)]
 enum Rule {
+    /// Equal rule checks if the key is equal to the value.
     Equal(String, String),
+    /// NotEqual rule checks if the key is not equal to the value.
     NotEqual(String, String),
+    /// Exists rule checks if the key exists.
     Exists(String),
+    /// DoesNotExist rule checks if the key does not exist.
     DoesNotExist(String),
 }
 
+/// LabelFilter is a filter for Kubernetes labels.
+/// It is used to filter nodes by their labels.
 #[derive(Debug, Clone, Default)]
 pub struct LabelFilter {
     rules: Vec<Rule>,
 }
 
 impl LabelFilter {
-    #[must_use] pub fn check(&self, labels: &BTreeMap<String, String>) -> bool {
+    #[must_use]
+    pub fn check(&self, labels: &BTreeMap<String, String>) -> bool {
         for rule in &self.rules {
             match rule {
                 Rule::Equal(key, value) => {
@@ -45,6 +53,9 @@ impl LabelFilter {
     }
 }
 
+/// Parse label filter from string.
+/// The string should be in the following format:
+/// `key=value,key!=value,key,!key`
 impl FromStr for LabelFilter {
     type Err = LBTrackerError;
 

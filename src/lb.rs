@@ -27,6 +27,9 @@ pub struct LBService {
     pub target_port: i32,
 }
 
+/// Struct representing a load balancer
+/// It holds all the necessary information to manage the load balancer
+/// in Hetzner Cloud.
 #[derive(Debug)]
 pub struct LoadBalancer {
     pub name: String,
@@ -42,6 +45,12 @@ pub struct LoadBalancer {
 }
 
 impl LoadBalancer {
+    /// Create a new LoadBalancer instance from a Kubernetes service
+    /// and the current context.
+    /// This method will try to extract all the necessary information
+    /// from the service annotations and the context.
+    /// If some of the required information is missing, the method will
+    /// try to use the default values from the context.
     pub fn try_from_svc(svc: &Service, context: &CurrentContext) -> LBTrackerResult<Self> {
         let retries = svc
             .annotations()
@@ -91,14 +100,21 @@ impl LoadBalancer {
         })
     }
 
+    /// Add a service to the load balancer.
+    /// The service will listen on the listen_port and forward the
+    /// traffic to the target_port to all targets.
     pub fn add_service(&mut self, listen_port: i32, target_port: i32) {
         self.services.insert(listen_port, target_port);
     }
 
+    /// Add a target to the load balancer.
+    /// The target will receive the traffic from the services.
+    /// The target is identified by its IP address.
     pub fn add_target(&mut self, ip: &str) {
         self.targets.push(ip.to_string());
     }
 
+    /// Reconcile the load balancer.
     pub async fn reconcile(&self) -> LBTrackerResult<()> {
         let hcloud_balancer = self.get_hcloud_lb().await?;
         futures::try_join!(
@@ -108,6 +124,10 @@ impl LoadBalancer {
         Ok(())
     }
 
+    /// Reconcile the services of the load balancer.
+    /// This method will compare the desired configuration of the services
+    /// with the current configuration of the services in the load balancer.
+    /// If the configuration does not match, the method will update the service.
     async fn reconcile_services(
         &self,
         hcloud_balancer: &hcloud::models::LoadBalancer,
@@ -211,6 +231,10 @@ impl LoadBalancer {
         Ok(())
     }
 
+    /// Reconcile the targets of the load balancer.
+    /// This method will compare the desired configuration of the targets
+    /// with the current configuration of the targets in the load balancer.
+    /// If the configuration does not match, the method will update the target.
     async fn reconcile_targets(
         &self,
         hcloud_balancer: &hcloud::models::LoadBalancer,
@@ -260,6 +284,9 @@ impl LoadBalancer {
         Ok(())
     }
 
+    /// Cleanup the load balancer.
+    /// This method will remove all the services and targets from the
+    /// load balancer.
     pub async fn cleanup(&self) -> LBTrackerResult<()> {
         let hcloud_balancer = self.get_hcloud_lb().await?;
         for service in &hcloud_balancer.services {
@@ -298,6 +325,12 @@ impl LoadBalancer {
         Ok(())
     }
 
+    /// Get the load balancer from Hetzner Cloud.
+    /// This method will try to find the load balancer with the name
+    /// specified in the LoadBalancer struct.
+    ///
+    /// The method might return an error if the load balancer is not found
+    /// or if there are multiple load balancers with the same name.
     async fn get_hcloud_lb(&self) -> LBTrackerResult<hcloud::models::LoadBalancer> {
         let hcloud_balancers = hcloud::apis::load_balancers_api::list_load_balancers(
             &self.hcloud_config,

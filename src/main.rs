@@ -106,6 +106,10 @@ impl CurrentContext {
     }
 }
 
+/// Reconcile the service.
+/// This function is called by the controller for each service.
+/// It will create or update the load balancer based on the service.
+/// If the service is being deleted, it will clean up the resources.
 #[tracing::instrument(skip(svc,context), fields(service=svc.name_any()))]
 pub async fn reconcile_service(
     svc: Arc<Service>,
@@ -132,6 +136,7 @@ pub async fn reconcile_service(
         finalizers::add(context.client.clone(), &svc).await?;
     }
 
+    // Based on the service type, we will reconcile the load balancer.
     match spec.type_.as_deref() {
         Some("NodePort") => {
             reconcile_node_port(lb, svc.clone(), context)
@@ -150,6 +155,9 @@ pub async fn reconcile_service(
     }
 }
 
+/// Reconcile the load balancer type of service.
+/// This function will wait until the service has IP address.
+/// Then it will create or update the load balancer.
 pub async fn reconcile_load_balancer(
     mut lb: LoadBalancer,
     svc: Arc<Service>,
@@ -174,6 +182,9 @@ pub async fn reconcile_load_balancer(
     Ok(Action::requeue(Duration::from_secs(10)))
 }
 
+/// Reconcile the NodePort type of service.
+/// This function will find the nodes based on the node selector
+/// and create or update the load balancer.
 pub async fn reconcile_node_port(
     mut lb: LoadBalancer,
     svc: Arc<Service>,
@@ -220,6 +231,7 @@ pub async fn reconcile_node_port(
     Ok(Action::requeue(Duration::from_secs(10)))
 }
 
+/// Handle the error during reconcilation.
 #[allow(clippy::needless_pass_by_value)]
 fn on_error(_: Arc<Service>, error: &LBTrackerError, _context: Arc<CurrentContext>) -> Action {
     match error {
