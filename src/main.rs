@@ -176,6 +176,11 @@ pub async fn reconcile_load_balancer(
         }
     }
     for port in svc.spec.clone().unwrap_or_default().ports.unwrap_or_default(){
+        let protocol = port.protocol.unwrap_or("TCP".to_string());
+        if protocol != "TCP" {
+            tracing::warn!("Protocol {} is not supported, skipping", protocol);
+            continue;
+        }
         lb.add_service(port.port, port.port);
     }
     lb.reconcile().await?;
@@ -220,8 +225,13 @@ pub async fn reconcile_node_port(
     }
 
     for port in svc.spec.clone().unwrap_or_default().ports.unwrap_or_default() {
+        let protocol = port.protocol.unwrap_or("TCP".to_string());
+        if protocol != "TCP" {
+            tracing::warn!("Protocol {} is not supported. Skipping...", protocol);
+            continue;
+        }
         let Some(node_port) = port.node_port else {
-            tracing::warn!("Node port is not set for target_port {}", port.port);
+            tracing::warn!("Node port is not set for target_port {}. Skipping...", port.port);
             continue;
         };
         lb.add_service(port.port, node_port);
