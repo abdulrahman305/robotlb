@@ -7,15 +7,15 @@ use crate::error::LBTrackerError;
 enum Rule {
     /// Equal rule checks if the key is equal to the value.
     Equal(String, String),
-    /// NotEqual rule checks if the key is not equal to the value.
+    /// `NotEqual` rule checks if the key is not equal to the value.
     NotEqual(String, String),
     /// Exists rule checks if the key exists.
     Exists(String),
-    /// DoesNotExist rule checks if the key does not exist.
+    /// `DoesNotExist` rule checks if the key does not exist.
     DoesNotExist(String),
 }
 
-/// LabelFilter is a filter for Kubernetes labels.
+/// `LabelFilter` is a filter for Kubernetes labels.
 /// It is used to filter nodes by their labels.
 #[derive(Debug, Clone, Default)]
 pub struct LabelFilter {

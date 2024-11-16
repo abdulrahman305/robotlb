@@ -45,7 +45,7 @@ pub struct LoadBalancer {
 }
 
 impl LoadBalancer {
-    /// Create a new LoadBalancer instance from a Kubernetes service
+    /// Create a new `LoadBalancer` instance from a Kubernetes service
     /// and the current context.
     /// This method will try to extract all the necessary information
     /// from the service annotations and the context.
@@ -101,8 +101,8 @@ impl LoadBalancer {
     }
 
     /// Add a service to the load balancer.
-    /// The service will listen on the listen_port and forward the
-    /// traffic to the target_port to all targets.
+    /// The service will listen on the `listen_port` and forward the
+    /// traffic to the `target_port` to all targets.
     pub fn add_service(&mut self, listen_port: i32, target_port: i32) {
         self.services.insert(listen_port, target_port);
     }
@@ -327,7 +327,7 @@ impl LoadBalancer {
 
     /// Get the load balancer from Hetzner Cloud.
     /// This method will try to find the load balancer with the name
-    /// specified in the LoadBalancer struct.
+    /// specified in the `LoadBalancer` struct.
     ///
     /// The method might return an error if the load balancer is not found
     /// or if there are multiple load balancers with the same name.

@@ -176,7 +176,7 @@ pub async fn reconcile_load_balancer(
         }
     }
     for port in svc.spec.clone().unwrap_or_default().ports.unwrap_or_default(){
-        let protocol = port.protocol.unwrap_or("TCP".to_string());
+        let protocol = port.protocol.unwrap_or_else(|| "TCP".to_string());
         if protocol != "TCP" {
             tracing::warn!("Protocol {} is not supported, skipping", protocol);
             continue;
@@ -187,7 +187,7 @@ pub async fn reconcile_load_balancer(
     Ok(Action::requeue(Duration::from_secs(10)))
 }
 
-/// Reconcile the NodePort type of service.
+/// Reconcile the `NodePort` type of service.
 /// This function will find the nodes based on the node selector
 /// and create or update the load balancer.
 pub async fn reconcile_node_port(
@@ -225,7 +225,7 @@ pub async fn reconcile_node_port(
     }
 
     for port in svc.spec.clone().unwrap_or_default().ports.unwrap_or_default() {
-        let protocol = port.protocol.unwrap_or("TCP".to_string());
+        let protocol = port.protocol.unwrap_or_else(|| "TCP".to_string());
         if protocol != "TCP" {
             tracing::warn!("Protocol {} is not supported. Skipping...", protocol);
             continue;

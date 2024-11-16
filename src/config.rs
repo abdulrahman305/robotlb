@@ -3,7 +3,7 @@ use tracing::level_filters::LevelFilter;
 
 #[derive(Debug, Clone, Parser)]
 pub struct OperatorConfig {
-    /// HCloud API token.
+    /// `HCloud` API token.
     #[arg(short = 't', long, env = "LB_TRACKER_HCLOUD_TOKEN")]
     pub hcloud_token: String,
 
