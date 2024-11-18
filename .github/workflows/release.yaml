@@ -33,7 +33,7 @@ jobs:
           file: ./Dockerfile
           platforms: linux/amd64,linux/arm64
           push: true
-          tags: ghcr.io/Intreecom/robotlb:latest,ghcr.io/Intreecom/robotlb:${{ github.ref_name }}
+          tags: ghcr.io/intreecom/robotlb:latest,ghcr.io/intreecom/robotlb:${{ github.ref_name }}
 
   upload_helm:
     runs-on: ubuntu-latest
@@ -54,6 +54,6 @@ jobs:
           helm package --app-version "${{ github.ref_name }}" --dependency-update ./helm
           helm show chart *.tgz
           helm registry login -u ${{ github.actor }} -p ${{ secrets.GITHUB_TOKEN }} ghcr.io
-          helm push *.tgz oci://ghcr.io/Intreecom/charts
+          helm push *.tgz oci://ghcr.io/intreecom/charts
         env:
           HELM_EXPERIMENTAL_OCI: 1
