@@ -2,13 +2,18 @@ use hcloud::{
     apis::{
         configuration::Configuration as HcloudConfig,
         load_balancers_api::{
-            AddServiceParams, AddTargetParams, DeleteServiceParams, ListLoadBalancersParams,
+            AddServiceParams, AddTargetParams, AttachLoadBalancerToNetworkParams,
+            ChangeAlgorithmParams, ChangeTypeOfLoadBalancerParams, DeleteLoadBalancerParams,
+            DeleteServiceParams, DetachLoadBalancerFromNetworkParams, ListLoadBalancersParams,
             RemoveTargetParams, UpdateServiceParams,
         },
+        networks_api::ListNetworksParams,
     },
     models::{
-        DeleteServiceRequest, LoadBalancerAddTarget, LoadBalancerService,
-        LoadBalancerServiceHealthCheck, RemoveTargetRequest, UpdateLoadBalancerService,
+        AttachLoadBalancerToNetworkRequest, ChangeTypeOfLoadBalancerRequest, DeleteServiceRequest,
+        DetachLoadBalancerFromNetworkRequest, LoadBalancerAddTarget, LoadBalancerAlgorithm,
+        LoadBalancerService, LoadBalancerServiceHealthCheck, RemoveTargetRequest,
+        UpdateLoadBalancerService,
     },
 };
 use k8s_openapi::api::core::v1::Service;
@@ -27,6 +32,11 @@ pub struct LBService {
     pub target_port: i32,
 }
 
+enum LBAlgorithm {
+    RoundRobin,
+    LeastConnections,
+}
+
 /// Struct representing a load balancer
 /// It holds all the necessary information to manage the load balancer
 /// in Hetzner Cloud.
@@ -40,6 +50,11 @@ pub struct LoadBalancer {
     pub timeout: i32,
     pub retries: i32,
     pub proxy_mode: bool,
+
+    pub location: String,
+    pub balancer_type: String,
+    pub algorithm: LoadBalancerAlgorithm,
+    pub network_name: Option<String>,
 
     pub hcloud_config: HcloudConfig,
 }
@@ -82,18 +97,50 @@ impl LoadBalancer {
             .map(String::as_str)
             .map(bool::from_str)
             .transpose()?
-            .unwrap_or(false);
+            .unwrap_or(context.config.default_lb_proxy_mode_enabled);
 
-        let Some(name) = svc.annotations().get(consts::LB_NAME_LABEL_NAME).cloned() else {
-            return Err(LBTrackerError::SkipService);
-        };
+        let location = svc
+            .annotations()
+            .get(consts::LB_LOCATION_LABEL_NAME)
+            .cloned()
+            .unwrap_or_else(|| context.config.default_lb_location.clone());
+
+        let balancer_type = svc
+            .annotations()
+            .get(consts::LB_BALANCER_TYPE_LABEL_NAME)
+            .cloned()
+            .unwrap_or_else(|| context.config.default_balancer_type.clone());
+
+        let algorithm = svc
+            .annotations()
+            .get(consts::LB_ALGORITHM_LABEL_NAME)
+            .map(String::as_str)
+            .or(Some(&context.config.default_lb_algorithm))
+            .map(LBAlgorithm::from_str)
+            .transpose()?
+            .unwrap_or(LBAlgorithm::LeastConnections);
+
+        let network_name = svc
+            .annotations()
+            .get(consts::LB_NETWORK_LABEL_NAME)
+            .cloned();
+
+        let name = svc
+            .annotations()
+            .get(consts::LB_NAME_LABEL_NAME)
+            .cloned()
+            .unwrap_or(svc.name_any());
 
         Ok(Self {
             name,
+            balancer_type,
             check_interval,
             timeout,
             retries,
+            location,
             proxy_mode,
+            network_name,
+            algorithm: algorithm.into(),
             services: HashMap::default(),
             targets: Vec::default(),
             hcloud_config: context.hcloud_config.clone(),
@@ -115,13 +162,15 @@ impl LoadBalancer {
     }
 
     /// Reconcile the load balancer.
-    pub async fn reconcile(&self) -> LBTrackerResult<()> {
-        let hcloud_balancer = self.get_hcloud_lb().await?;
-        futures::try_join!(
-            self.reconcile_services(&hcloud_balancer),
-            self.reconcile_targets(&hcloud_balancer),
-        )?;
-        Ok(())
+    #[tracing::instrument(skip(self), fields(lb_name=self.name))]
+    pub async fn reconcile(&self) -> LBTrackerResult<hcloud::models::LoadBalancer> {
+        let hcloud_balancer = self.get_or_create_hcloud_lb().await?;
+        self.reconcile_algorithm(&hcloud_balancer).await?;
+        self.reconcile_lb_type(&hcloud_balancer).await?;
+        self.reconcile_network(&hcloud_balancer).await?;
+        self.reconcile_services(&hcloud_balancer).await?;
+        self.reconcile_targets(&hcloud_balancer).await?;
+        Ok(hcloud_balancer)
     }
 
     /// Reconcile the services of the load balancer.
@@ -284,11 +333,121 @@ impl LoadBalancer {
         Ok(())
     }
 
+    async fn reconcile_algorithm(
+        &self,
+        hcloud_balancer: &hcloud::models::LoadBalancer,
+    ) -> LBTrackerResult<()> {
+        if *hcloud_balancer.algorithm == self.algorithm.clone().into() {
+            return Ok(());
+        }
+        tracing::info!(
+            "Changing load balancer algorithm from {:?} to {:?}",
+            hcloud_balancer.algorithm,
+            self.algorithm
+        );
+        hcloud::apis::load_balancers_api::change_algorithm(
+            &self.hcloud_config,
+            ChangeAlgorithmParams {
+                id: hcloud_balancer.id,
+                body: Some(self.algorithm.clone().into()),
+            },
+        )
+        .await?;
+        Ok(())
+    }
+
+    async fn reconcile_lb_type(
+        &self,
+        hcloud_balancer: &hcloud::models::LoadBalancer,
+    ) -> LBTrackerResult<()> {
+        if hcloud_balancer.load_balancer_type.name == self.balancer_type {
+            return Ok(());
+        }
+        tracing::info!(
+            "Changing load balancer type from {} to {}",
+            hcloud_balancer.load_balancer_type.name,
+            self.balancer_type
+        );
+        hcloud::apis::load_balancers_api::change_type_of_load_balancer(
+            &self.hcloud_config,
+            ChangeTypeOfLoadBalancerParams {
+                id: hcloud_balancer.id,
+                change_type_of_load_balancer_request: Some(ChangeTypeOfLoadBalancerRequest {
+                    load_balancer_type: self.balancer_type.clone(),
+                }),
+            },
+        )
+        .await?;
+        Ok(())
+    }
+
+    async fn reconcile_network(
+        &self,
+        hcloud_balancer: &hcloud::models::LoadBalancer,
+    ) -> LBTrackerResult<()> {
+        // If the network name is not provided, and laod balancer is not attached to any network,
+        // we can skip this step.
+        if self.network_name.is_none() && hcloud_balancer.private_net.is_empty() {
+            return Ok(());
+        }
+
+        let desired_network = self.get_network().await?.map(|network| network.id);
+        // If the network name is not provided, but the load balancer is attached to a network,
+        // we need to detach it from the network.
+        let mut contain_desired_network = false;
+        if !hcloud_balancer.private_net.is_empty() {
+            for private_net in &hcloud_balancer.private_net {
+                let Some(private_net_id) = private_net.network else {
+                    continue;
+                };
+                if desired_network == Some(private_net_id) {
+                    contain_desired_network = true;
+                    continue;
+                }
+                tracing::info!("Detaching balancer from network {}", private_net_id);
+                hcloud::apis::load_balancers_api::detach_load_balancer_from_network(
+                    &self.hcloud_config,
+                    DetachLoadBalancerFromNetworkParams {
+                        id: hcloud_balancer.id,
+                        detach_load_balancer_from_network_request: Some(
+                            DetachLoadBalancerFromNetworkRequest {
+                                network: private_net_id,
+                            },
+                        ),
+                    },
+                )
+                .await?;
+            }
+        }
+        if !contain_desired_network {
+            let Some(network_id) = desired_network else {
+                return Ok(());
+            };
+            tracing::info!("Attaching balancer to network {}", network_id);
+            hcloud::apis::load_balancers_api::attach_load_balancer_to_network(
+                &self.hcloud_config,
+                AttachLoadBalancerToNetworkParams {
+                    id: hcloud_balancer.id,
+                    attach_load_balancer_to_network_request: Some(
+                        AttachLoadBalancerToNetworkRequest {
+                            ip: None,
+                            network: network_id,
+                        },
+                    ),
+                },
+            )
+            .await?;
+        }
+        Ok(())
+    }
+
     /// Cleanup the load balancer.
     /// This method will remove all the services and targets from the
     /// load balancer.
     pub async fn cleanup(&self) -> LBTrackerResult<()> {
-        let hcloud_balancer = self.get_hcloud_lb().await?;
+        let Some(hcloud_balancer) = self.get_hcloud_lb().await? else {
+            return Ok(());
+        };
         for service in &hcloud_balancer.services {
             tracing::info!(
                 "Deleting service that listens for port {} from load-balancer {}",
@@ -322,6 +481,13 @@ impl LoadBalancer {
                 .await?;
             }
         }
+        hcloud::apis::load_balancers_api::delete_load_balancer(
+            &self.hcloud_config,
+            DeleteLoadBalancerParams {
+                id: hcloud_balancer.id,
+            },
+        )
+        .await?;
         Ok(())
     }
 
@@ -331,7 +497,7 @@ impl LoadBalancer {
     ///
     /// The method might return an error if the load balancer is not found
     /// or if there are multiple load balancers with the same name.
-    async fn get_hcloud_lb(&self) -> LBTrackerResult<hcloud::models::LoadBalancer> {
+    async fn get_hcloud_lb(&self) -> LBTrackerResult<Option<hcloud::models::LoadBalancer>> {
         let hcloud_balancers = hcloud::apis::load_balancers_api::list_load_balancers(
             &self.hcloud_config,
             ListLoadBalancersParams {
@@ -347,11 +513,113 @@ impl LoadBalancer {
             );
             return Err(LBTrackerError::SkipService);
         }
-        let Some(balancer) = hcloud_balancers.load_balancers.into_iter().next() else {
-            tracing::warn!("Balancer {} not found", self.name);
-            return Err(LBTrackerError::SkipService);
-        };
+        // Here we just return the first load balancer,
+        // if it exists, otherwise we return None
+        Ok(hcloud_balancers.load_balancers.into_iter().next())
+    }
 
-        Ok(balancer)
+    /// Get or create the load balancer in Hetzner Cloud.
+    ///
+    /// this method will try to find the load balancer with the name
+    /// specified in the `LoadBalancer` struct. If the load balancer
+    /// is not found, the method will create a new load balancer
+    /// with the specified configuration in service's annotations.
+    async fn get_or_create_hcloud_lb(&self) -> LBTrackerResult<hcloud::models::LoadBalancer> {
+        let hcloud_lb = self.get_hcloud_lb().await?;
+        if let Some(balancer) = hcloud_lb {
+            return Ok(balancer);
+        }
+        let network = self.get_network().await?;
+        let network_id = network.map(|n| n.id);
+
+        let response = hcloud::apis::load_balancers_api::create_load_balancer(
+            &self.hcloud_config,
+            hcloud::apis::load_balancers_api::CreateLoadBalancerParams {
+                create_load_balancer_request: Some(hcloud::models::CreateLoadBalancerRequest {
+                    algorithm: Some(Box::new(self.algorithm.clone())),
+                    labels: None,
+                    load_balancer_type: self.balancer_type.clone(),
+                    location: Some(self.location.clone()),
+                    name: self.name.clone(),
+                    network: network_id,
+                    network_zone: None,
+                    public_interface: Some(true),
+                    services: Some(vec![]),
+                    targets: Some(vec![]),
+                }),
+            },
+        )
+        .await;
+        if let Err(e) = response {
+            tracing::error!("Failed to create load balancer: {:?}", e);
+            return Err(LBTrackerError::HCloudError(format!(
+                "Failed to create load balancer: {:?}",
+                e
+            )));
+        }
+
+        Ok(*response.unwrap().load_balancer)
+    }
+
+    /// Get the network from Hetzner Cloud.
+    /// This method will try to find the network with the name
+    /// specified in the `LoadBalancer` struct. It returns `None` only
+    /// in case the network name is not provided. If the network was not found,
+    /// the error is returned.
+    async fn get_network(&self) -> LBTrackerResult<Option<hcloud::models::Network>> {
+        let Some(network_name) = self.network_name.clone() else {
+            return Ok(None);
+        };
+        let response = hcloud::apis::networks_api::list_networks(
+            &self.hcloud_config,
+            ListNetworksParams {
+                name: Some(network_name.clone()),
+                ..Default::default()
+            },
+        )
+        .await?;
+
+        if response.networks.len() > 1 {
+            tracing::warn!(
+                "Found more than one network with name {}, skipping",
+                network_name
+            );
+            return Err(LBTrackerError::HCloudError(format!(
+                "Found more than one network with name {}",
+                network_name,
+            )));
+        }
+        if response.networks.is_empty() {
+            tracing::warn!("Network with name {} not found", network_name);
+            return Err(LBTrackerError::HCloudError(format!(
+                "Network with name {} not found",
+                network_name,
+            )));
+        }
+
+        Ok(response.networks.into_iter().next())
+    }
+}
+
+impl FromStr for LBAlgorithm {
+    type Err = LBTrackerError;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "round-robin" => Ok(Self::RoundRobin),
+            "least-connections" => Ok(Self::LeastConnections),
+            _ => Err(LBTrackerError::UnknownLBAlgorithm),
+        }
+    }
+}
+
+impl From<LBAlgorithm> for LoadBalancerAlgorithm {
+    fn from(value: LBAlgorithm) -> Self {
+        let r#type = match value {
+            LBAlgorithm::RoundRobin => hcloud::models::load_balancer_algorithm::Type::RoundRobin,
+            LBAlgorithm::LeastConnections => {
+                hcloud::models::load_balancer_algorithm::Type::LeastConnections
+            }
+        };
+        Self { r#type }
     }
 }

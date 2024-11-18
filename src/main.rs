@@ -21,16 +21,18 @@ use config::OperatorConfig;
 use error::{LBTrackerError, LBTrackerResult};
 use futures::StreamExt;
 use hcloud::apis::configuration::Configuration as HCloudConfig;
-use k8s_openapi::api::core::v1::{Node, Service};
+use k8s_openapi::{
+    api::core::v1::{Node, Service},
+    serde_json::json,
+};
 use kube::{
-    api::ListParams,
+    api::{ListParams, PatchParams},
     runtime::{controller::Action, watcher, Controller},
     Resource, ResourceExt,
 };
 use label_filter::LabelFilter;
 use lb::LoadBalancer;
 use std::{str::FromStr, sync::Arc, time::Duration};
-use tracing::Instrument;
 
 pub mod config;
 pub mod consts;
@@ -85,7 +87,7 @@ async fn main() -> LBTrackerResult<()> {
                     _,
                 ) => {}
                 _ => {
-                    tracing::error!("Error reconciling service: {:?}", err);
+                    tracing::error!("Error reconciling service: {:#?}", err);
                 }
             },
         }
@@ -124,7 +126,19 @@ pub async fn reconcile_service(
     svc: Arc<Service>,
     context: Arc<CurrentContext>,
 ) -> LBTrackerResult<Action> {
+    let svc_type = svc
+        .spec
+        .as_ref()
+        .and_then(|s| s.type_.as_ref())
+        .map(String::as_str)
+        .unwrap_or("ClusterIP");
+    if svc_type != "LoadBalancer" {
+        tracing::debug!("Service type is not LoadBalancer. Skipping...");
+        return Err(LBTrackerError::SkipService);
+    }
+
     tracing::info!("Starting service reconcilation");
+
     let lb = LoadBalancer::try_from_svc(&svc, &context)?;
 
     // If the service is being deleted, we need to clean up the resources.
@@ -135,84 +149,19 @@ pub async fn reconcile_service(
         return Ok(Action::await_change());
     }
 
-    let Some(spec) = &svc.spec else {
-        tracing::warn!("Service has no spec, skipping");
-        return Err(LBTrackerError::SkipService);
-    };
-
     // Add finalizer if it's not there yet.
     if !finalizers::check(&svc) {
         finalizers::add(context.client.clone(), &svc).await?;
     }
 
     // Based on the service type, we will reconcile the load balancer.
-    match spec.type_.as_deref() {
-        Some("NodePort") => {
-            reconcile_node_port(lb, svc.clone(), context)
-                .in_current_span()
-                .await
-        }
-        Some("LoadBalancer") => {
-            reconcile_load_balancer(lb, svc.clone())
-                .in_current_span()
-                .await
-        }
-        _ => {
-            tracing::warn!("Service type is not supported, skipping");
-            Err(LBTrackerError::UnsupportedServiceType)
-        }
-    }
+    reconcile_load_balancer(lb, svc.clone(), context).await
 }
 
-/// Reconcile the load balancer type of service.
-/// This function will wait until the service has IP address.
-/// Then it will create or update the load balancer.
-pub async fn reconcile_load_balancer(
-    mut lb: LoadBalancer,
-    svc: Arc<Service>,
-) -> LBTrackerResult<Action> {
-    let Some(svc_ingress) = svc
-        .status
-        .clone()
-        .unwrap_or_default()
-        .load_balancer
-        .unwrap_or_default()
-        .ingress
-    else {
-        tracing::warn!("Service hasn't yet got IP, skipping");
-        return Err(LBTrackerError::SkipService);
-    };
-    for ingress in svc_ingress {
-        if ingress.hostname.is_some() {
-            tracing::warn!("Hostname based loadbalancing is not supported, skipping");
-            continue;
-        }
-        if let Some(ip) = &ingress.ip {
-            lb.add_target(ip);
-        }
-    }
-    for port in svc
-        .spec
-        .clone()
-        .unwrap_or_default()
-        .ports
-        .unwrap_or_default()
-    {
-        let protocol = port.protocol.unwrap_or_else(|| "TCP".to_string());
-        if protocol != "TCP" {
-            tracing::warn!("Protocol {} is not supported, skipping", protocol);
-            continue;
-        }
-        lb.add_service(port.port, port.port);
-    }
-    lb.reconcile().await?;
-    Ok(Action::requeue(Duration::from_secs(10)))
-}
-
-/// Reconcile the `NodePort` type of service.
+/// Reconcile the `LoadBalancer` type of service.
 /// This function will find the nodes based on the node selector
 /// and create or update the load balancer.
-pub async fn reconcile_node_port(
+pub async fn reconcile_load_balancer(
     mut lb: LoadBalancer,
     svc: Arc<Service>,
     context: Arc<CurrentContext>,
@@ -232,6 +181,12 @@ pub async fn reconcile_node_port(
         .filter(|node| label_filter.check(node.labels()))
         .collect::<Vec<_>>();
 
+    let node_ip_type = svc
+        .annotations()
+        .get(consts::LB_NODE_IP_LABEL_NAME)
+        .map(String::as_str)
+        .unwrap_or(consts::DEFAULT_NODE_IP);
+
     for node in nodes {
         let Some(status) = node.status else {
             continue;
@@ -240,7 +195,7 @@ pub async fn reconcile_node_port(
             continue;
         };
         for addr in addresses {
-            if addr.type_ == "InternalIP" {
+            if addr.type_ == node_ip_type {
                 lb.add_target(&addr.address);
             }
         }
@@ -268,15 +223,60 @@ pub async fn reconcile_node_port(
         lb.add_service(port.port, node_port);
     }
 
-    lb.reconcile().await?;
-    Ok(Action::requeue(Duration::from_secs(10)))
+    let svc_api = kube::Api::<Service>::namespaced(
+        context.client.clone(),
+        svc.namespace()
+            .unwrap_or_else(|| context.client.default_namespace().to_string())
+            .as_str(),
+    );
+
+    let hcloud_lb = lb.reconcile().await?;
+
+    let mut ingress = vec![];
+
+    let dns_ipv4 = hcloud_lb.public_net.ipv4.dns_ptr.flatten();
+    let ipv4 = hcloud_lb.public_net.ipv4.ip.flatten();
+    let dns_ipv6 = hcloud_lb.public_net.ipv6.dns_ptr.flatten();
+    let ipv6 = hcloud_lb.public_net.ipv6.ip.flatten();
+    if ipv4.is_some() {
+        ingress.push(json!({
+            "ip": ipv4,
+            "dns": dns_ipv4,
+            "ip_mode": "VIP"
+        }))
+    }
+    if ipv6.is_some() && context.config.ipv6_ingress {
+        ingress.push(json!({
+            "ip": ipv6,
+            "dns": dns_ipv6,
+            "ip_mode": "VIP"
+        }))
+    }
+
+    if ipv4.is_some() {
+        svc_api
+            .patch_status(
+                svc.name_any().as_str(),
+                &PatchParams::default(),
+                &kube::api::Patch::Merge(json!({
+                    "status" :{
+                        "loadBalancer": {
+                            "ingress": ingress
+                        }
+                    }
+                })),
+            )
+            .await?;
+    }
+
+    Ok(Action::requeue(Duration::from_secs(30)))
 }
 
 /// Handle the error during reconcilation.
 #[allow(clippy::needless_pass_by_value)]
 fn on_error(_: Arc<Service>, error: &LBTrackerError, _context: Arc<CurrentContext>) -> Action {
     match error {
-        LBTrackerError::SkipService => Action::requeue(Duration::from_secs(60 * 5)),
-        _ => Action::requeue(Duration::from_secs(60)),
+        LBTrackerError::SkipService => Action::await_change(),
+        _ => Action::requeue(Duration::from_secs(30)),
     }
 }
