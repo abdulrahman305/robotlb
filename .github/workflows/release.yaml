@@ -7,9 +7,6 @@ on:
 jobs:
   release_image:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        architecture: [amd64, arm64]
     permissions:
       packages: write
       contents: read
@@ -34,7 +31,7 @@ jobs:
         with:
           context: .
           file: ./Dockerfile
-          platforms: linux/${{ matrix.architecture }}
+          platforms: linux/amd64,linux/arm64
           push: true
           tags: ghcr.io/intreecom/robotlb:latest,ghcr.io/intreecom/robotlb:${{ github.ref_name }}
 
