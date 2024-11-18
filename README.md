@@ -13,7 +13,20 @@ Before you can use this operator, please make sure:
 2. You created a [vSwitch](https://docs.hetzner.com/robot/dedicated-server/network/vswitch/) for these servers;
 3. You have a cloud network with subnet that points to the vSwitch ([Tutorial](https://docs.hetzner.com/cloud/networks/connect-dedi-vswitch/));
 
-If you have all the requirements met, you can create a service of type LoadBalancer.
+If you have all the requirements met, you can deploy robotlb.
+
+## Deploying
+
+The recommended way of deploying this operator is by using helm chart.
+
+
+```bash
+helm show values oci://ghcr.io/intreecom/charts/robotlb > values.yaml
+# Edit values.yaml to suit your needs
+helm install robotlb oci://ghcr.io/intreecom/charts/robotlb -f values.yaml
+```
+
+After the chart is installed, you should be able to create `LoadBalancer` services.
 
 ## Configuration
 
