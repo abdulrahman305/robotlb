@@ -14,6 +14,6 @@ FROM debian:bookworm AS base
 
 RUN apt-get update && apt install -y libssl-dev ca-certificates libjemalloc-dev && apt-get clean
 
-COPY --from=builder /app/target/release/lb-tracker /usr/local/bin/
+COPY --from=builder /app/target/release/robotlb /usr/local/bin/
 ENV PATH=/usr/local/bin:$PATH
-ENTRYPOINT ["/usr/local/bin/lb-tracker"]
+ENTRYPOINT ["/usr/local/bin/robotlb"]

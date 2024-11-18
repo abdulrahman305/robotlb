@@ -56,10 +56,7 @@ async fn main() -> LBTrackerResult<()> {
     let mut hcloud_conf = HCloudConfig::new();
     hcloud_conf.bearer_access_token = Some(operator_config.hcloud_token.clone());
 
-    tracing::info!(
-        "Starting lb-tracker operator v{}",
-        env!("CARGO_PKG_VERSION")
-    );
+    tracing::info!("Starting robotlb operator v{}", env!("CARGO_PKG_VERSION"));
     let kube_client = kube::Client::try_default().await?;
     tracing::info!("Kube client is connected");
     watcher::Config::default();

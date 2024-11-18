@@ -161,7 +161,7 @@ impl LoadBalancer {
         self.targets.push(ip.to_string());
     }
 
-    /// Reconcile the load balancer.
+    /// Reconcile the load balancer to match the desired configuration.
     #[tracing::instrument(skip(self), fields(lb_name=self.name))]
     pub async fn reconcile(&self) -> LBTrackerResult<hcloud::models::LoadBalancer> {
         let hcloud_balancer = self.get_or_create_hcloud_lb().await?;
@@ -182,6 +182,8 @@ impl LoadBalancer {
         hcloud_balancer: &hcloud::models::LoadBalancer,
     ) -> LBTrackerResult<()> {
         for service in &hcloud_balancer.services {
+            // Here we check that all the services are configured correctly.
+            // If the service is not configured correctly, we update it.
             if let Some(destination_port) = self.services.get(&service.listen_port) {
                 if service.destination_port == *destination_port
                     && service.health_check.port == *destination_port
@@ -193,6 +195,7 @@ impl LoadBalancer {
                     && service.health_check.protocol
                         == hcloud::models::load_balancer_service_health_check::Protocol::Tcp
                 {
+                    // The desired configuration matches the current configuration.
                     continue;
                 }
                 tracing::info!(
@@ -333,6 +336,9 @@ impl LoadBalancer {
         Ok(())
     }
 
+    /// Reconcile the load balancer algorithm.
+    /// This method will compare the desired algorithm configuration
+    /// and update it if it does not match the current configuration.
     async fn reconcile_algorithm(
         &self,
         hcloud_balancer: &hcloud::models::LoadBalancer,
@@ -356,6 +362,7 @@ impl LoadBalancer {
         Ok(())
     }
 
+    /// Reconcile the load balancer type.
     async fn reconcile_lb_type(
         &self,
         hcloud_balancer: &hcloud::models::LoadBalancer,
@@ -381,6 +388,11 @@ impl LoadBalancer {
         Ok(())
     }
 
+    /// Reconcile the network of the load balancer.
+    /// This method will compare the desired network configuration
+    /// with the current network configuration of the load balancer.
+    /// If the configuration does not match, the method will update the
+    /// network configuration.
     async fn reconcile_network(
         &self,
         hcloud_balancer: &hcloud::models::LoadBalancer,

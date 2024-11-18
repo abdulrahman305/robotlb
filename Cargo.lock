@@ -1322,23 +1322,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bbd2bcb4c963f2ddae06a2efc7e9f3591312473c50c6685e1f298068316e66fe"
 
 [[package]]
-name = "lb-tracker"
-version = "0.0.0"
-dependencies = [
- "clap",
- "dotenvy",
- "futures",
- "hcloud",
- "k8s-openapi",
- "kube",
- "thiserror 2.0.3",
- "tikv-jemallocator",
- "tokio",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
 name = "libc"
 version = "0.2.162"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1817,6 +1800,23 @@ dependencies = [
  "spin",
  "untrusted",
  "windows-sys 0.52.0",
+]
+
+[[package]]
+name = "robotlb"
+version = "0.0.0"
+dependencies = [
+ "clap",
+ "dotenvy",
+ "futures",
+ "hcloud",
+ "k8s-openapi",
+ "kube",
+ "thiserror 2.0.3",
+ "tikv-jemallocator",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
