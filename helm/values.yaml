@@ -31,8 +31,11 @@ serviceAccount:
   # By default it grants all permissions.
   permissions:
   - apiGroups: [""]
-    resources: ["services"]
+    resources: [services]
     verbs: [get, list, patch, update, watch]
+  - apiGroups: [""]
+    resources: [nodes]
+    verbs: [get, list, watch]
   # - apiGroups: ["apps/v1"]
   #   resources: ["deployments"]
   #   verbs: ["get", "list"]
