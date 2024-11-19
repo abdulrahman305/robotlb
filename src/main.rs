@@ -178,11 +178,10 @@ pub async fn reconcile_load_balancer(
         .filter(|node| label_filter.check(node.labels()))
         .collect::<Vec<_>>();
 
-    let node_ip_type = svc
-        .annotations()
-        .get(consts::LB_NODE_IP_LABEL_NAME)
-        .map(String::as_str)
-        .unwrap_or(consts::DEFAULT_NODE_IP);
+    let mut node_ip_type = "InternalIP";
+    if lb.network_name.is_none() {
+        node_ip_type = "ExternalIP";
+    }
 
     for node in nodes {
         let Some(status) = node.status else {
@@ -235,22 +234,24 @@ pub async fn reconcile_load_balancer(
     let ipv4 = hcloud_lb.public_net.ipv4.ip.flatten();
     let dns_ipv6 = hcloud_lb.public_net.ipv6.dns_ptr.flatten();
     let ipv6 = hcloud_lb.public_net.ipv6.ip.flatten();
-    if ipv4.is_some() {
+    if let Some(ipv4) = &ipv4 {
         ingress.push(json!({
             "ip": ipv4,
             "dns": dns_ipv4,
             "ip_mode": "VIP"
         }))
     }
-    if ipv6.is_some() && context.config.ipv6_ingress {
-        ingress.push(json!({
-            "ip": ipv6,
-            "dns": dns_ipv6,
-            "ip_mode": "VIP"
-        }))
+    if context.config.ipv6_ingress {
+        if let Some(ipv6) = &ipv6 {
+            ingress.push(json!({
+                "ip": ipv6,
+                "dns": dns_ipv6,
+                "ip_mode": "VIP"
+            }))
+        }
     }
 
-    if ipv4.is_some() {
+    if !ingress.is_empty() {
         svc_api
             .patch_status(
                 svc.name_any().as_str(),
