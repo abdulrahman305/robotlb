@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   release_image:
-    runs-on: ubuntu-latest
+    runs-on: nscloud-ubuntu-22.04-amd64-4x16
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -38,7 +38,7 @@ jobs:
           tags: ghcr.io/intreecom/robotlb:latest,ghcr.io/intreecom/robotlb:${{ github.ref_name }}
 
   upload_helm:
-    runs-on: ubuntu-latest
+    runs-on: nscloud-ubuntu-22.04-amd64-4x16
     needs: [release_image]
     steps:
       - uses: actions/checkout@v4
